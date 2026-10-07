@@ -1,50 +1,55 @@
 import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from openai import AsyncOpenAI
+import ollama # Biblioteca do Ollama
 import uvicorn
 
 app = FastAPI()
 
-# A chave da API será pega das variáveis de ambiente do Google Cloud
-client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+# URL do seu servidor Ollama (Ex: http://seu-ip:11434)
+# Se o Ollama estiver na mesma máquina do código, use http://localhost:11434
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+MODEL_NAME = os.environ.get("OLLAMA_MODEL", "llama3") # Ou mistral, phi3, etc.
+
+# A PERSONA DO DINOIA (O Prompt de Sistema)
+SYSTEM_PROMPT = """Crie um sistema de consultoria fitness para um aplicativo com as seguintes funcionalidades:
+- Substituir exercícios por outros semelhantes do mesmo grupo muscular.
+- Montar treinos e dietas personalizados.
+- Realizar avaliações musculares e posturais a partir de fotos.
+- Coletar contexto completo (água, dieta, treino, resultados).
+- Fornecer análise detalhada e sugestões para o personal trainer.
+
+Siga estas etapas para cada resposta:
+1. Liste e descreva todos os dados analisados.
+2. Realize a análise detalhada justificando cada observação.
+3. Elabore sugestões personalizadas para treino e dieta.
+4. Conclua com sugestões técnicas para o personal trainer.
+
+Formato de saída: Relatório organizado ou JSON se solicitado.
+Responda sempre em português."""
 
 class ChatRequest(BaseModel):
     user_input: str
-    agent_id: str = "agent_2b602f38211a4003a4e8798a81221d8d5e67e8351f484fe49d"
 
 @app.get("/")
 async def root():
-    return {"status": "DinoIA Online"}
+    return {"status": "DinoIA com Ollama Online"}
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
     try:
-        # 1. Cria uma thread (conversa) para o aluno
-        thread = await client.beta.threads.create()
-
-        # 2. Adiciona a mensagem do aluno à thread
-        await client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=request.user_input
-        )
-
-        # 3. Executa o agente (Run)
-        run = await client.beta.threads.runs.create_and_poll(
-            thread_id=thread.id,
-            assistant_id=request.agent_id
-        )
-
-        if run.status == 'completed':
-            # 4. Recupera a última mensagem do agente
-            messages = await client.beta.threads.messages.list(thread_id=thread.id)
-            return {"response": messages.data[0].content[0].text.value}
-        else:
-            return {"error": f"Run status: {run.status}"}
-
+        # Configura o cliente do Ollama para apontar para o host correto
+        client = ollama.Client(host=OLLAMA_HOST)
+        
+        response = client.chat(model=MODEL_NAME, messages=[
+            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'user', 'content': request.user_input},
+        ])
+        
+        return {"response": response['message']['content']}
+            
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Erro no Ollama: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
